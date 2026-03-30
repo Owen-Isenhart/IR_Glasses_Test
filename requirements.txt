@@ -5,3 +5,4 @@ pytest==8.3.5
 
 # Default runtime backend
 mediapipe==0.10.21
+onnxruntime==1.21.1

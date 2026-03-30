@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlretrieve
 from typing import Optional, Tuple
 
 import cv2
@@ -15,35 +18,80 @@ class _DetectorConfig:
     model_selection: int = 0
 
 
-class MediaPipeHogBackend(FaceBackend):
+@dataclass
+class _EmbeddingConfig:
+    model_path: str = "models/mobilefacenet.onnx"
+    model_url: str = "https://github.com/onnx/models/raw/main/validated/vision/body_analysis/arcface/model/arcfaceresnet100-11-int8.onnx"
+    input_size: int = 112
+    normalize_mean: float = 127.5
+    normalize_std: float = 128.0
+
+
+class MediaPipeEmbeddingBackend(FaceBackend):
     name = "mediapipe"
 
-    def __init__(self, cfg: Optional[_DetectorConfig] = None) -> None:
-        self.cfg = cfg or _DetectorConfig()
+    def __init__(
+        self,
+        detector_cfg: Optional[_DetectorConfig] = None,
+        embedding_cfg: Optional[_EmbeddingConfig] = None,
+    ) -> None:
+        self.detector_cfg = detector_cfg or _DetectorConfig()
+        self.embedding_cfg = embedding_cfg or _EmbeddingConfig()
         self._mp = None
         self._detector = None
-        self._hog = cv2.HOGDescriptor(
-            _winSize=(64, 64),
-            _blockSize=(16, 16),
-            _blockStride=(8, 8),
-            _cellSize=(8, 8),
-            _nbins=9,
-        )
+        self._ort = None
+        self._session = None
+        self._input_name = ""
+        self._input_layout = "nchw"
 
         try:
             import mediapipe as mp  # type: ignore
 
             self._mp = mp
             self._detector = mp.solutions.face_detection.FaceDetection(
-                model_selection=self.cfg.model_selection,
-                min_detection_confidence=self.cfg.min_detection_confidence,
+                model_selection=self.detector_cfg.model_selection,
+                min_detection_confidence=self.detector_cfg.min_detection_confidence,
             )
         except Exception:
             self._detector = None
 
+        try:
+            import onnxruntime as ort  # type: ignore
+
+            self._ort = ort
+            model_path = Path(self.embedding_cfg.model_path)
+            self._ensure_model_file(model_path)
+            if model_path.exists():
+                providers = [
+                    p for p in ["CUDAExecutionProvider", "CPUExecutionProvider"] if p in ort.get_available_providers()
+                ]
+                if not providers:
+                    providers = ["CPUExecutionProvider"]
+                self._session = ort.InferenceSession(str(model_path), providers=providers)
+                model_inputs = self._session.get_inputs()
+                if model_inputs:
+                    self._input_name = model_inputs[0].name
+                    self._input_layout = self._infer_input_layout(model_inputs[0].shape)
+        except Exception:
+            self._session = None
+
+    def _ensure_model_file(self, model_path: Path) -> None:
+        if model_path.exists():
+            return
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            urlretrieve(self.embedding_cfg.model_url, model_path)
+        except (URLError, OSError, ValueError):
+            # Keep startup non-fatal: availability check will return a clear message.
+            return
+
     def is_available(self) -> Tuple[bool, str]:
         if self._detector is None:
             return False, "mediapipe is not installed or detector could not initialize"
+        if self._ort is None:
+            return False, "onnxruntime is not installed"
+        if self._session is None:
+            return False, f"embedding model unavailable: {self.embedding_cfg.model_path}"
         return True, "ok"
 
     def observe(self, frame_bgr: np.ndarray) -> FaceObservation:
@@ -78,33 +126,72 @@ class MediaPipeHogBackend(FaceBackend):
         if not best_bbox:
             return FaceObservation(found=False, reason="invalid bbox")
 
-        emb = self._compute_hog_embedding(frame_bgr, best_bbox)
+        emb = self._compute_embedding(frame_bgr, best_bbox)
         if emb is None:
             return FaceObservation(found=False, reason="embedding failure")
 
         return FaceObservation(found=True, bbox=best_bbox, embedding=emb, confidence=best_conf)
 
-    def _compute_hog_embedding(
+    def _compute_embedding(
         self, frame_bgr: np.ndarray, bbox: Tuple[int, int, int, int]
     ) -> Optional[np.ndarray]:
+        if self._session is None or not self._input_name:
+            return None
+
         x1, y1, x2, y2 = bbox
         if x2 <= x1 or y2 <= y1:
             return None
 
-        face = frame_bgr[y1:y2, x1:x2]
-        if face.size == 0:
+        h, w = frame_bgr.shape[:2]
+        pad_x = int((x2 - x1) * 0.2)
+        pad_y = int((y2 - y1) * 0.2)
+        cx1 = max(0, x1 - pad_x)
+        cy1 = max(0, y1 - pad_y)
+        cx2 = min(w, x2 + pad_x)
+        cy2 = min(h, y2 + pad_y)
+
+        face = frame_bgr[cy1:cy2, cx1:cx2]
+        if face.size == 0 or face.shape[0] < 10 or face.shape[1] < 10:
             return None
 
-        gray = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
-        gray = cv2.equalizeHist(gray)
-        gray = cv2.resize(gray, (64, 64), interpolation=cv2.INTER_AREA)
+        chip = cv2.resize(
+            face,
+            (self.embedding_cfg.input_size, self.embedding_cfg.input_size),
+            interpolation=cv2.INTER_AREA,
+        )
+        chip_rgb = cv2.cvtColor(chip, cv2.COLOR_BGR2RGB)
+        model_input = chip_rgb.astype(np.float32)
+        model_input = (model_input - self.embedding_cfg.normalize_mean) / self.embedding_cfg.normalize_std
 
-        desc = self._hog.compute(gray)
-        if desc is None:
+        if self._input_layout == "nchw":
+            model_input = np.transpose(model_input, (2, 0, 1))[None, ...]
+        else:
+            model_input = model_input[None, ...]
+
+        outputs = self._session.run(None, {self._input_name: model_input})
+        if not outputs:
             return None
 
-        vec = desc.flatten().astype(np.float32)
+        vec = np.asarray(outputs[0]).reshape(-1).astype(np.float32)
+        if vec.size == 0:
+            return None
+
         norm = float(np.linalg.norm(vec))
         if norm < 1e-8:
             return None
         return vec / norm
+
+    def _infer_input_layout(self, shape: object) -> str:
+        if not isinstance(shape, (list, tuple)) or len(shape) != 4:
+            return "nchw"
+        c_dim = shape[1]
+        last_dim = shape[3]
+        if isinstance(last_dim, int) and last_dim == 3:
+            return "nhwc"
+        if isinstance(c_dim, int) and c_dim == 3:
+            return "nchw"
+        return "nchw"
+
+
+class MediaPipeHogBackend(MediaPipeEmbeddingBackend):
+    """Backward-compatible alias for legacy imports."""

@@ -29,11 +29,11 @@ thresholds:
 
 threshold_defaults:
   mediapipe:
-    match_max: 0.20
-    blocked_max: 0.35
+    match_max: 0.08
+    blocked_max: 0.15
   dlib:
-    match_max: 0.01
-    blocked_max: 0.08
+    match_max: 0.08
+    blocked_max: 0.15
 
 paths:
   baseline_dir: data/baseline

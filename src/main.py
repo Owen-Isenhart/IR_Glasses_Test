@@ -59,11 +59,11 @@ def load_thresholds_for_backend(cfg: Dict[str, object], backend_name: str) -> Th
     backend_defaults = defaults_cfg.get(backend_name, {}) if isinstance(defaults_cfg, dict) else {}
 
     if backend_name == "dlib":
-        fallback_match = 0.1
-        fallback_blocked = 0.3
+        fallback_match = 0.08
+        fallback_blocked = 0.15
     else:
-        fallback_match = 0.35
-        fallback_blocked = 0.6
+        fallback_match = 0.08
+        fallback_blocked = 0.15
 
     match_max = float(backend_defaults.get("match_max", thresholds_cfg.get("match_max", fallback_match)))
     blocked_max = float(backend_defaults.get("blocked_max", thresholds_cfg.get("blocked_max", fallback_blocked)))
