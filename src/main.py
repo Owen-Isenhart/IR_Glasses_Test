@@ -168,14 +168,14 @@ def main() -> int:
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
     cv2.resizeWindow(window_name, window_w, window_h)
 
-    backend = create_backend(backend_name)
+    backend = create_backend(backend_name, options=runtime_cfg if isinstance(runtime_cfg, dict) else None)
     ok, message = backend.is_available()
     if not ok:
         camera.close()
         raise RuntimeError(f"Backend '{backend_name}' unavailable: {message}")
 
     baseline_mgr = BaselineManager(Path(cfg.get("paths", {}).get("baseline_dir", "data/baseline")))
-    baseline = baseline_mgr.load_embedding(backend.name)
+    baselines = baseline_mgr.load_embeddings(backend.name, camera_index=camera.config.index)
 
     thresholds = load_thresholds_for_backend(cfg, backend.name)
     autocalibrator = AutoCalibrator(
@@ -208,8 +208,10 @@ def main() -> int:
         "backend": backend.name,
     })
 
-    if baseline is None:
-        print("No baseline found. Press 'c' to capture baseline without glasses.")
+    append_baseline = bool(runtime_cfg.get("append_baseline", True))
+
+    if baselines is None:
+        print(f"No baseline found for backend={backend.name}, camera={camera.config.index}. Press 'c' to capture baseline without glasses.")
 
     prev_time = time.perf_counter()
     last_distance = None
@@ -229,24 +231,26 @@ def main() -> int:
             distance_raw = None
             distance_smooth = None
 
-            if baseline is not None and obs.found and obs.embedding is not None:
-                if obs.embedding.shape != baseline.shape:
+            if baselines is not None and obs.found and obs.embedding is not None:
+                if obs.embedding.shape[0] != baselines.shape[1]:
                     logger.event(
                         {
                             "event": "baseline_dim_mismatch",
                             "backend": backend.name,
                             "obs_dim": int(obs.embedding.shape[0]),
-                            "baseline_dim": int(baseline.shape[0]),
+                            "baseline_dim": int(baselines.shape[1]),
                         }
                     )
-                    baseline = None
+                    baselines = None
                     banner_message = (
                         f"Baseline dimension mismatch for {backend.name}; press 'c' to calibrate"
                     )
                     banner_until = time.time() + 3.0
                     state = state_machine.update(face_found=True, distance_label="blocked")
                 else:
-                    distance_raw = cosine_distance(obs.embedding, baseline)
+                    distance_raw = min(
+                        cosine_distance(obs.embedding, baseline_vec) for baseline_vec in baselines
+                    )
                     distance_smooth = smoother.update(distance_raw)
                     label = classify_distance(distance_smooth, thresholds)
                     state = state_machine.update(face_found=True, distance_label=label)
@@ -257,7 +261,7 @@ def main() -> int:
             else:
                 state = state_machine.update(face_found=False, distance_label="blocked")
 
-            if autocal and baseline is not None and obs.found and distance_raw is not None:
+            if autocal and baselines is not None and obs.found and distance_raw is not None:
                 updated = autocalibrator.update(distance_raw, thresholds)
                 if updated:
                     logger.event(
@@ -313,19 +317,22 @@ def main() -> int:
                 banner_until = time.time() + 1.8
             if key == ord("b"):
                 candidate = choose_backend(backend.name)
-                next_backend = create_backend(candidate)
+                next_backend = create_backend(
+                    candidate,
+                    options=runtime_cfg if isinstance(runtime_cfg, dict) else None,
+                )
                 ok2, message2 = next_backend.is_available()
                 if ok2:
                     backend = next_backend
-                    baseline = baseline_mgr.load_embedding(backend.name)
+                    baselines = baseline_mgr.load_embeddings(backend.name, camera_index=camera.config.index)
                     thresholds = load_thresholds_for_backend(cfg, backend.name)
                     smoother.reset()
                     autocalibrator.reset()
                     state_machine = IdentityStateMachine(state_machine.cfg)
                     logger.event({"event": "switch_backend", "backend": backend.name})
-                    if baseline is None:
+                    if baselines is None:
                         banner_message = (
-                            f"Switched backend to {backend.name}; no baseline for this backend (press 'c')"
+                            f"Switched backend to {backend.name}; no baseline for cam {camera.config.index} (press 'c')"
                         )
                     else:
                         banner_message = f"Switched backend to {backend.name}"
@@ -343,6 +350,7 @@ def main() -> int:
                 )
                 if ok_cam:
                     camera_index = camera.config.index
+                    baselines = baseline_mgr.load_embeddings(backend.name, camera_index=camera_index)
                     smoother.reset()
                     autocalibrator.reset()
                     state_machine = IdentityStateMachine(state_machine.cfg)
@@ -353,9 +361,14 @@ def main() -> int:
                             "preflight": switch_preflight,
                         }
                     )
-                    banner_message = (
-                        f"Camera: index {camera.config.index} ({'IR' if camera.config.index == 2 else 'RGB'})"
-                    )
+                    if baselines is None:
+                        banner_message = (
+                            f"Camera: index {camera.config.index} ({'IR' if camera.config.index == 2 else 'RGB'}) - no baseline (press 'c')"
+                        )
+                    else:
+                        banner_message = (
+                            f"Camera: index {camera.config.index} ({'IR' if camera.config.index == 2 else 'RGB'})"
+                        )
                     banner_until = time.time() + 1.8
                 else:
                     logger.event(
@@ -383,13 +396,28 @@ def main() -> int:
                         },
                     }
                 )
-                baseline_mgr.save(new_baseline, snapshot, meta, backend_name=backend.name)
-                baseline = new_baseline
+                baseline_mgr.save(
+                    new_baseline,
+                    snapshot,
+                    meta,
+                    backend_name=backend.name,
+                    camera_index=camera_index,
+                    append=append_baseline,
+                )
+                baselines = baseline_mgr.load_embeddings(backend.name, camera_index=camera_index)
                 smoother.reset()
                 autocalibrator.reset()
                 state_machine = IdentityStateMachine(state_machine.cfg)
-                logger.event({"event": "baseline_captured", **meta})
-                banner_message = "Baseline captured"
+                total_baselines = int(baselines.shape[0]) if baselines is not None else 0
+                logger.event(
+                    {
+                        "event": "baseline_captured",
+                        "append": append_baseline,
+                        "baseline_count": total_baselines,
+                        **meta,
+                    }
+                )
+                banner_message = f"Baseline captured ({total_baselines} total)"
                 banner_until = time.time() + 1.8
 
     finally:

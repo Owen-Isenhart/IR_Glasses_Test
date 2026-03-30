@@ -22,19 +22,35 @@ CPU-focused diagnostic tool to measure whether IR-blocking glasses prevent biome
    - `python -m src.main --camera-index 2 --backend mediapipe`
 
 ## Controls
-- `c`: Capture/recalibrate baseline (without glasses)
+- `c`: Capture/add baseline (without glasses)
 - `b`: Switch backend (mediapipe <-> dlib)
 - `a`: Toggle auto-calibration
 - `q` or `ESC`: Quit
 
+## Multi-baseline behavior
+- Each baseline capture is stored per backend and camera index (default: append mode).
+- Matching uses the best (lowest-distance) result across all stored baselines for the active backend + active camera mode.
+- Configure baseline capture mode in `config/config.yaml` under `runtime.append_baseline`:
+   - `true` (default): add new capture to baseline set.
+   - `false`: replace with only the latest capture.
+
 ## Auto-calibration behavior
 - Auto-calibration derives match/block thresholds directly from recent live distance samples (quantile based).
+- It does **not** capture or add baseline embeddings.
 - HUD shows live threshold values (`match`, `block`) and sample count so threshold changes are visible.
 - It updates every few frames after enough samples are collected and resets when baseline or backend changes.
 
 ## Backend default thresholds
 - `mediapipe`: match ≈ `0.20`, blocked ≈ `0.35`
 - `dlib`: match ≈ `0.01`, blocked ≈ `0.08`
+
+## Dlib performance tuning
+- Dlib now supports frame skipping, downscaled detection, and optional OpenCV tracking.
+- Configure in `config/config.yaml` under `runtime.dlib`:
+   - `detect_every_n_frames`: run full dlib detect+encode every N frames (cached result is reused between runs)
+   - `detection_scale`: detect on a downscaled frame (e.g. `0.5`) and map bbox back to full resolution
+   - `use_tracker`: use tracker updates between detector runs to avoid repeated full detections
+   - `tracker_type`: tracker implementation (`MOSSE`, `KCF`, `CSRT`)
 
 ## Data outputs
 - Baseline artifacts in `data/baseline/`

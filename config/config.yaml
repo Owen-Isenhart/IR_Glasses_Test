@@ -10,6 +10,12 @@ runtime:
   autocalibrate: false
   preflight_frames: 15
   baseline_frames: 25
+  append_baseline: true
+  dlib:
+    detect_every_n_frames: 3
+    detection_scale: 0.5
+    use_tracker: true
+    tracker_type: MOSSE
 
 thresholds:
   match_max: 0.20
