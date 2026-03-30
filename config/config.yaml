@@ -18,7 +18,7 @@ thresholds:
   rolling_window: 5
   evasion_frames: 12
   autocal_min_samples: 25
-  autocal_window: 120
+  autocal_window: 240
   autocal_update_every: 10
   autocal_match_quantile: 0.95
   autocal_block_quantile: 0.995
