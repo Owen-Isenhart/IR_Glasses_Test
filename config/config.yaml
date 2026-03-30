@@ -1,0 +1,37 @@
+camera:
+  index: 2
+  width: 640
+  height: 480
+  fps: 30
+  prefer_v4l2: true
+
+runtime:
+  backend: mediapipe
+  autocalibrate: false
+  preflight_frames: 15
+  baseline_frames: 25
+
+thresholds:
+  match_max: 0.40
+  blocked_max: 0.60
+  ema_alpha: 0.30
+  rolling_window: 5
+  evasion_frames: 12
+  autocal_min_samples: 25
+  autocal_window: 120
+  autocal_update_every: 10
+  autocal_match_margin: 0.04
+  autocal_block_margin: 0.14
+  autocal_min_gap: 0.08
+  autocal_max_blocked: 0.85
+
+paths:
+  baseline_dir: data/baseline
+  log_dir: data/logs
+
+ui:
+  window_width: 1280
+  window_height: 900
+  render_width: 1920
+  render_height: 1080
+  preserve_aspect: true

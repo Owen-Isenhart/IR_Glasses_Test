@@ -1,0 +1,11 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
+venv/
+data/logs/*.jsonl
+data/logs/*_summary.json
+data/snapshots/
+data/baseline/*.npy
+data/baseline/*.jpg
+data/baseline/*.json

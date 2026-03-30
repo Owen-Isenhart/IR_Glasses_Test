@@ -1,0 +1,5 @@
+# Optional dlib/face_recognition backend dependencies.
+# Install only if you want --backend dlib support.
+# face_recognition_models relies on pkg_resources, removed in newer setuptools.
+setuptools<81
+face_recognition==1.3.0
