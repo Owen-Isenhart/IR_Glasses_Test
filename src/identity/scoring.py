@@ -18,8 +18,10 @@ class AutoCalConfig:
     min_samples: int = 25
     window: int = 120
     update_every: int = 10
-    match_margin: float = 0.04
-    blocked_margin: float = 0.14
+    match_quantile: float = 0.95
+    blocked_quantile: float = 0.995
+    match_margin: float = 0.005
+    blocked_margin: float = 0.02
     min_gap: float = 0.08
     max_blocked: float = 0.85
 
@@ -51,17 +53,17 @@ class AutoCalibrator:
 
         self._since_update = 0
         arr = np.array(self._samples, dtype=np.float32)
-        q50 = float(np.quantile(arr, 0.50))
-        q75 = float(np.quantile(arr, 0.75))
+        q_match = float(np.quantile(arr, self.cfg.match_quantile))
+        q_blocked = float(np.quantile(arr, self.cfg.blocked_quantile))
 
-        target_match = min(0.65, max(0.20, q50 + self.cfg.match_margin))
-        target_blocked = q75 + self.cfg.blocked_margin
+        target_match = q_match + self.cfg.match_margin
+        target_blocked = q_blocked + self.cfg.blocked_margin
         target_blocked = max(target_blocked, target_match + self.cfg.min_gap)
         target_blocked = min(self.cfg.max_blocked, target_blocked)
 
-        # Smooth threshold motion to avoid sudden classification jumps.
-        thresholds.match_max = 0.7 * thresholds.match_max + 0.3 * target_match
-        thresholds.blocked_max = 0.7 * thresholds.blocked_max + 0.3 * target_blocked
+        # Assign directly from observed data for calibration-true thresholds.
+        thresholds.match_max = float(max(0.0, target_match))
+        thresholds.blocked_max = float(max(thresholds.match_max + self.cfg.min_gap, target_blocked))
         return True
 
 

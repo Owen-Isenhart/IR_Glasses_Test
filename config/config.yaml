@@ -12,18 +12,28 @@ runtime:
   baseline_frames: 25
 
 thresholds:
-  match_max: 0.40
-  blocked_max: 0.60
+  match_max: 0.20
+  blocked_max: 0.35
   ema_alpha: 0.30
   rolling_window: 5
   evasion_frames: 12
   autocal_min_samples: 25
   autocal_window: 120
   autocal_update_every: 10
-  autocal_match_margin: 0.04
-  autocal_block_margin: 0.14
+  autocal_match_quantile: 0.95
+  autocal_block_quantile: 0.995
+  autocal_match_margin: 0.005
+  autocal_block_margin: 0.02
   autocal_min_gap: 0.08
   autocal_max_blocked: 0.85
+
+threshold_defaults:
+  mediapipe:
+    match_max: 0.20
+    blocked_max: 0.35
+  dlib:
+    match_max: 0.01
+    blocked_max: 0.08
 
 paths:
   baseline_dir: data/baseline

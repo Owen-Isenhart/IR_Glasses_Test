@@ -28,9 +28,13 @@ CPU-focused diagnostic tool to measure whether IR-blocking glasses prevent biome
 - `q` or `ESC`: Quit
 
 ## Auto-calibration behavior
-- Auto-calibration updates match/block thresholds from recent live distance samples.
+- Auto-calibration derives match/block thresholds directly from recent live distance samples (quantile based).
 - HUD shows live threshold values (`match`, `block`) and sample count so threshold changes are visible.
-- It updates gradually (not every frame) to reduce jitter and is reset when baseline or backend changes.
+- It updates every few frames after enough samples are collected and resets when baseline or backend changes.
+
+## Backend default thresholds
+- `mediapipe`: match ≈ `0.20`, blocked ≈ `0.35`
+- `dlib`: match ≈ `0.01`, blocked ≈ `0.08`
 
 ## Data outputs
 - Baseline artifacts in `data/baseline/`

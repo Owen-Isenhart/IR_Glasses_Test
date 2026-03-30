@@ -33,11 +33,20 @@ def test_smoother_monotonic_centering():
 def test_autocalibrator_updates_thresholds():
     t = Thresholds(match_max=0.4, blocked_max=0.6)
     ac = AutoCalibrator(
-        AutoCalConfig(min_samples=3, window=10, update_every=1, match_margin=0.04, blocked_margin=0.1)
+        AutoCalConfig(
+            min_samples=3,
+            window=10,
+            update_every=1,
+            match_quantile=0.95,
+            blocked_quantile=0.99,
+            match_margin=0.005,
+            blocked_margin=0.02,
+            min_gap=0.05,
+        )
     )
-    assert not ac.update(0.33, t)
-    assert not ac.update(0.34, t)
-    assert ac.update(0.35, t)
-    assert t.match_max != 0.4
+    assert not ac.update(0.03, t)
+    assert not ac.update(0.031, t)
+    assert ac.update(0.032, t)
+    assert t.match_max < 0.2
     assert t.blocked_max != 0.6
     assert t.blocked_max > t.match_max

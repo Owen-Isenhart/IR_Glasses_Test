@@ -53,6 +53,24 @@ def choose_backend(current_name: str) -> str:
     return "dlib" if current_name == "mediapipe" else "mediapipe"
 
 
+def load_thresholds_for_backend(cfg: Dict[str, object], backend_name: str) -> Thresholds:
+    thresholds_cfg = cfg.get("thresholds", {})
+    defaults_cfg = cfg.get("threshold_defaults", {})
+    backend_defaults = defaults_cfg.get(backend_name, {}) if isinstance(defaults_cfg, dict) else {}
+
+    if backend_name == "dlib":
+        fallback_match = 0.1
+        fallback_blocked = 0.3
+    else:
+        fallback_match = 0.35
+        fallback_blocked = 0.6
+
+    match_max = float(backend_defaults.get("match_max", thresholds_cfg.get("match_max", fallback_match)))
+    blocked_max = float(backend_defaults.get("blocked_max", thresholds_cfg.get("blocked_max", fallback_blocked)))
+    blocked_max = max(blocked_max, match_max + 1e-4)
+    return Thresholds(match_max=match_max, blocked_max=blocked_max)
+
+
 def fit_frame_to_window(frame, target_w: int, target_h: int, preserve_aspect: bool):
     """Scale frame to target size with optional aspect-ratio preservation."""
     win_w = max(1, int(target_w))
@@ -127,15 +145,14 @@ def main() -> int:
     baseline_mgr = BaselineManager(Path(cfg.get("paths", {}).get("baseline_dir", "data/baseline")))
     baseline = baseline_mgr.load_embedding(backend.name)
 
-    thresholds = Thresholds(
-        match_max=float(thresholds_cfg.get("match_max", 0.40)),
-        blocked_max=float(thresholds_cfg.get("blocked_max", 0.60)),
-    )
+    thresholds = load_thresholds_for_backend(cfg, backend.name)
     autocalibrator = AutoCalibrator(
         AutoCalConfig(
             min_samples=int(thresholds_cfg.get("autocal_min_samples", 25)),
             window=int(thresholds_cfg.get("autocal_window", 120)),
             update_every=int(thresholds_cfg.get("autocal_update_every", 10)),
+            match_quantile=float(thresholds_cfg.get("autocal_match_quantile", 0.95)),
+            blocked_quantile=float(thresholds_cfg.get("autocal_block_quantile", 0.995)),
             match_margin=float(thresholds_cfg.get("autocal_match_margin", 0.04)),
             blocked_margin=float(thresholds_cfg.get("autocal_block_margin", 0.14)),
             min_gap=float(thresholds_cfg.get("autocal_min_gap", 0.08)),
@@ -268,6 +285,7 @@ def main() -> int:
                 if ok2:
                     backend = next_backend
                     baseline = baseline_mgr.load_embedding(backend.name)
+                    thresholds = load_thresholds_for_backend(cfg, backend.name)
                     smoother.reset()
                     autocalibrator.reset()
                     state_machine = IdentityStateMachine(state_machine.cfg)
