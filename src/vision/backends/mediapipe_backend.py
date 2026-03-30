@@ -14,8 +14,9 @@ from .base import FaceBackend, FaceObservation
 
 @dataclass
 class _DetectorConfig:
-    min_detection_confidence: float = 0.45
+    min_detection_confidence: float = 0.35
     model_selection: int = 0
+    lost_face_grace_frames: int = 8
 
 
 @dataclass
@@ -43,6 +44,8 @@ class MediaPipeEmbeddingBackend(FaceBackend):
         self._session = None
         self._input_name = ""
         self._input_layout = "nchw"
+        self._last_observation: Optional[FaceObservation] = None
+        self._missing_face_frames = 0
 
         try:
             import mediapipe as mp  # type: ignore
@@ -103,7 +106,7 @@ class MediaPipeEmbeddingBackend(FaceBackend):
         result = self._detector.process(rgb)
         detections = result.detections if result and result.detections else []
         if not detections:
-            return FaceObservation(found=False, reason="no face")
+            return self._handle_missed_face()
 
         # Keep the largest detected face to reduce multi-face ambiguity.
         best_bbox = None
@@ -124,13 +127,33 @@ class MediaPipeEmbeddingBackend(FaceBackend):
                 best_conf = float(d.score[0]) if d.score else 0.0
 
         if not best_bbox:
-            return FaceObservation(found=False, reason="invalid bbox")
+            return self._handle_missed_face()
 
         emb = self._compute_embedding(frame_bgr, best_bbox)
         if emb is None:
-            return FaceObservation(found=False, reason="embedding failure")
+            return self._handle_missed_face()
+        self._missing_face_frames = 0
+        obs = FaceObservation(found=True, bbox=best_bbox, embedding=emb, confidence=best_conf)
+        self._last_observation = obs
+        return obs
 
-        return FaceObservation(found=True, bbox=best_bbox, embedding=emb, confidence=best_conf)
+    def _handle_missed_face(self) -> FaceObservation:
+        if self._last_observation is None:
+            return FaceObservation(found=False, reason="no face")
+
+        self._missing_face_frames += 1
+        if self._missing_face_frames <= max(0, int(self.detector_cfg.lost_face_grace_frames)):
+            # Briefly reuse last observation to reduce UI/state flicker from detector jitter.
+            return FaceObservation(
+                found=True,
+                bbox=self._last_observation.bbox,
+                embedding=self._last_observation.embedding,
+                confidence=float(self._last_observation.confidence * 0.8),
+                reason="grace_hold",
+            )
+
+        self._last_observation = None
+        return FaceObservation(found=False, reason="no face")
 
     def _compute_embedding(
         self, frame_bgr: np.ndarray, bbox: Tuple[int, int, int, int]

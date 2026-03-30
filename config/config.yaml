@@ -11,18 +11,23 @@ runtime:
   preflight_frames: 15
   baseline_frames: 25
   append_baseline: true
+  mediapipe:
+    min_detection_confidence: 0.35
+    model_selection: 0
+    lost_face_grace_frames: 8
   dlib:
     detect_every_n_frames: 3
     detection_scale: 0.5
     use_tracker: true
-    tracker_type: MOSSE
+    tracker_type: CSRT
+    lost_face_grace_frames: 8
 
 thresholds:
   match_max: 0.20
   blocked_max: 0.35
   ema_alpha: 0.30
   rolling_window: 5
-  evasion_frames: 12
+  evasion_frames: 18
   autocal_min_samples: 25
   autocal_window: 240
   autocal_update_every: 10

@@ -51,6 +51,15 @@ CPU-focused diagnostic tool to measure whether IR-blocking glasses prevent biome
    - `detection_scale`: detect on a downscaled frame (e.g. `0.5`) and map bbox back to full resolution
    - `use_tracker`: use tracker updates between detector runs to avoid repeated full detections
    - `tracker_type`: tracker implementation (`MOSSE`, `KCF`, `CSRT`)
+   - `lost_face_grace_frames`: keep the last known face bbox+embedding for this many missed frames to reduce flicker/dropouts
+- For more stable boxes, prefer `CSRT` (best stability, higher CPU) or `KCF` (balanced).
+
+## MediaPipe stability tuning
+- Configure in `config/config.yaml` under `runtime.mediapipe`:
+   - `min_detection_confidence`: lower values are less strict (more detections, potentially more false positives)
+   - `model_selection`: `0` short-range, `1` longer-range detector
+   - `lost_face_grace_frames`: number of consecutive missed detector frames to keep last bbox/embedding before declaring no face
+- If status flips to evasion too aggressively, increase `thresholds.evasion_frames`.
 
 ## Data outputs
 - Baseline artifacts in `data/baseline/`

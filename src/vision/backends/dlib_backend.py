@@ -15,6 +15,7 @@ class DlibPerfConfig:
     detection_scale: float = 0.5
     use_tracker: bool = True
     tracker_type: str = "MOSSE"
+    lost_face_grace_frames: int = 8
 
 
 class DlibFaceRecognitionBackend(FaceBackend):
@@ -26,6 +27,7 @@ class DlibFaceRecognitionBackend(FaceBackend):
         detection_scale: float = 0.5,
         use_tracker: bool = True,
         tracker_type: str = "MOSSE",
+        lost_face_grace_frames: int = 8,
     ) -> None:
         self._fr = None
         self._cfg = DlibPerfConfig(
@@ -33,11 +35,13 @@ class DlibFaceRecognitionBackend(FaceBackend):
             detection_scale=float(min(max(detection_scale, 0.25), 1.0)),
             use_tracker=bool(use_tracker),
             tracker_type=str(tracker_type).upper(),
+            lost_face_grace_frames=max(0, int(lost_face_grace_frames)),
         )
         self._frame_index = 0
         self._last_location = None
         self._last_embedding = None
         self._tracker = None
+        self._missing_face_frames = 0
         try:
             import face_recognition as fr  # type: ignore
 
@@ -78,11 +82,12 @@ class DlibFaceRecognitionBackend(FaceBackend):
 
         if should_detect:
             best = self._detect_largest_location(rgb)
+            if best is None and self._cfg.use_tracker and self._tracker is not None:
+                tracked = self._track_location(frame_bgr)
+                if tracked is not None:
+                    best = tracked
             if best is None:
-                self._last_location = None
-                self._last_embedding = None
-                self._tracker = None
-                return FaceObservation(found=False, reason="no face")
+                return self._handle_missed_face()
             self._last_location = best
             self._init_tracker(frame_bgr, best)
         else:
@@ -94,14 +99,15 @@ class DlibFaceRecognitionBackend(FaceBackend):
         if should_detect or self._last_embedding is None:
             encodings = self._fr.face_encodings(rgb, [best])
             if not encodings:
-                self._last_embedding = None
-                return FaceObservation(found=False, reason="encoding failure")
+                return self._handle_missed_face(reason="encoding failure")
 
             emb = np.array(encodings[0], dtype=np.float32)
             norm = float(np.linalg.norm(emb))
             if norm > 1e-8:
                 emb /= norm
             self._last_embedding = emb
+
+        self._missing_face_frames = 0
 
         top, right, bottom, left = best
 
@@ -111,6 +117,25 @@ class DlibFaceRecognitionBackend(FaceBackend):
             embedding=self._last_embedding,
             confidence=1.0,
         )
+
+    def _handle_missed_face(self, reason: str = "no face") -> FaceObservation:
+        if self._last_location is not None and self._last_embedding is not None:
+            self._missing_face_frames += 1
+            if self._missing_face_frames <= self._cfg.lost_face_grace_frames:
+                top, right, bottom, left = self._last_location
+                return FaceObservation(
+                    found=True,
+                    bbox=(left, top, right, bottom),
+                    embedding=self._last_embedding,
+                    confidence=0.65,
+                    reason="grace_hold",
+                )
+
+        self._last_location = None
+        self._last_embedding = None
+        self._tracker = None
+        self._missing_face_frames = 0
+        return FaceObservation(found=False, reason=reason)
 
     def _detect_largest_location(self, rgb: np.ndarray):
         h, w = rgb.shape[:2]
