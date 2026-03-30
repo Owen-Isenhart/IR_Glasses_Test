@@ -19,6 +19,7 @@ def draw_hud(
     distance: Optional[float],
     bbox: Optional[Tuple[int, int, int, int]],
     backend_name: str,
+    camera_index: int,
     fps: float,
     autocalibrate: bool,
     threshold_match: float,
@@ -40,7 +41,7 @@ def draw_hud(
     cv2.putText(canvas, f"State: {status}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
     cv2.putText(
         canvas,
-        f"Distance: {distance_text}   Backend: {backend_name}",
+        f"Distance: {distance_text}   Backend: {backend_name}   Camera: {camera_index}",
         (10, 36),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.42,
@@ -49,10 +50,10 @@ def draw_hud(
     )
     cv2.putText(
         canvas,
-        f"FPS: {fps:.1f}   AutoCal: {'ON' if autocalibrate else 'OFF'}",
+        f"FPS: {fps:.1f}   AutoCal: {'ON' if autocalibrate else 'OFF'}   Keys: v=cam 0/2, b=backend, c=baseline, a=autocal, q=quit",
         (10, 50),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.42,
+        0.38,
         (230, 230, 230),
         1,
     )

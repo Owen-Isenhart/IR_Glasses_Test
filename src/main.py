@@ -5,7 +5,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
@@ -95,6 +95,38 @@ def fit_frame_to_window(frame, target_w: int, target_h: int, preserve_aspect: bo
     y0 = (win_h - out_h) // 2
     canvas[y0 : y0 + out_h, x0 : x0 + out_w] = resized
     return canvas
+
+
+def toggle_camera_index(current_index: int, a: int = 0, b: int = 2) -> int:
+    return b if current_index == a else a
+
+
+def reopen_camera(
+    camera: IRCamera,
+    target_index: int,
+    preflight_frames: int,
+) -> Tuple[bool, str, Dict[str, object]]:
+    """Switch to target camera index and rollback on failure."""
+    source_index = camera.config.index
+    if target_index == source_index:
+        return True, f"Camera index {target_index} already active", {}
+
+    camera.close()
+    camera.config.index = target_index
+    try:
+        camera.open()
+        preflight = camera.preflight(sample_frames=preflight_frames)
+        return True, f"Switched camera to index {target_index}", preflight
+    except Exception as exc:
+        error_message = str(exc)
+        camera.close()
+        camera.config.index = source_index
+        try:
+            camera.open()
+        except Exception as rollback_exc:
+            rollback_msg = str(rollback_exc)
+            return False, f"Camera switch failed and rollback failed: {rollback_msg}", {}
+        return False, f"Camera switch failed: {error_message}", {}
 
 
 def main() -> int:
@@ -252,6 +284,7 @@ def main() -> int:
                 distance=last_smooth if last_smooth is not None else last_distance,
                 bbox=obs.bbox,
                 backend_name=backend.name,
+                camera_index=camera.config.index,
                 fps=fps_now,
                 autocalibrate=autocal,
                 threshold_match=thresholds.match_max,
@@ -300,6 +333,39 @@ def main() -> int:
                 else:
                     logger.event({"event": "switch_backend_failed", "backend": candidate, "reason": message2})
                     banner_message = f"Backend switch failed: {candidate} unavailable"
+                    banner_until = time.time() + 2.5
+            if key == ord("v"):
+                target_index = toggle_camera_index(camera.config.index, a=0, b=2)
+                ok_cam, cam_message, switch_preflight = reopen_camera(
+                    camera,
+                    target_index=target_index,
+                    preflight_frames=int(runtime_cfg.get("preflight_frames", 15)),
+                )
+                if ok_cam:
+                    camera_index = camera.config.index
+                    smoother.reset()
+                    autocalibrator.reset()
+                    state_machine = IdentityStateMachine(state_machine.cfg)
+                    logger.event(
+                        {
+                            "event": "switch_camera",
+                            "camera": camera.metadata(),
+                            "preflight": switch_preflight,
+                        }
+                    )
+                    banner_message = (
+                        f"Camera: index {camera.config.index} ({'IR' if camera.config.index == 2 else 'RGB'})"
+                    )
+                    banner_until = time.time() + 1.8
+                else:
+                    logger.event(
+                        {
+                            "event": "switch_camera_failed",
+                            "target_index": target_index,
+                            "reason": cam_message,
+                        }
+                    )
+                    banner_message = cam_message
                     banner_until = time.time() + 2.5
             if key == ord("c"):
                 n = int(runtime_cfg.get("baseline_frames", 25))
